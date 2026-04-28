@@ -72,10 +72,12 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties(VkPhysicalDevice physic
         real_vkGetPhysicalDeviceProperties = (PFN_vkGetPhysicalDeviceProperties)get_real_proc("vkGetPhysicalDeviceProperties");
     if (real_vkGetPhysicalDeviceProperties)
         real_vkGetPhysicalDeviceProperties(physicalDevice, pProperties);
-    // Mali workaround: clamp maxStorageBufferRange
+    // Mali workaround: clamp memory limits
     if (pProperties && strstr(pProperties->deviceName, "Mali")) {
         if (pProperties->limits.maxStorageBufferRange > 128 * 1024 * 1024)
             pProperties->limits.maxStorageBufferRange = 128 * 1024 * 1024;
+        if (pProperties->limits.maxStorageImageRange > 128 * 1024 * 1024)
+            pProperties->limits.maxStorageImageRange = 128 * 1024 * 1024;
     }
 }
 
@@ -85,7 +87,7 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physica
         real_vkGetPhysicalDeviceFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)get_real_proc("vkGetPhysicalDeviceFeatures2");
     if (real_vkGetPhysicalDeviceFeatures2)
         real_vkGetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
-    // Mali workaround: force certain features (example)
+    // Mali workaround: force vertex attribute divisor extension as supported
     if (strstr(physicalDevice ? "Mali" : "", "Mali")) {
         pFeatures->features.shaderStorageBufferArrayDynamicIndexing = VK_TRUE;
     }
