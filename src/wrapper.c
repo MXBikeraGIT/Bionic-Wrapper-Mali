@@ -5,30 +5,19 @@
 #include "vulkan_wrapper.h"
 #include "device.h"
 
-// Real Vulkan driver handle
+// --- Real function pointers (will be loaded from libvulkan.so) ---
+static PFN_vkCreateInstance real_vkCreateInstance = NULL;
+static PFN_vkDestroyInstance real_vkDestroyInstance = NULL;
+static PFN_vkEnumeratePhysicalDevices real_vkEnumeratePhysicalDevices = NULL;
+static PFN_vkGetPhysicalDeviceProperties real_vkGetPhysicalDeviceProperties = NULL;
+static PFN_vkGetPhysicalDeviceFeatures2 real_vkGetPhysicalDeviceFeatures2 = NULL;
+static PFN_vkCreateDevice real_vkCreateDevice = NULL;
+static PFN_vkGetDeviceProcAddr real_vkGetDeviceProcAddr = NULL;
+
+// Helper functions to load the real driver
 static void *real_vk_handle = NULL;
 static PFN_vkGetInstanceProcAddr real_vkGetInstanceProcAddr = NULL;
 
-// Forward declarations of our wrapped functions
-static VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance_impl(const VkInstanceCreateInfo* pCreateInfo,
-                                                           const VkAllocationCallbacks* pAllocator,
-                                                           VkInstance* pInstance);
-static VKAPI_ATTR void VKAPI_CALL vkDestroyInstance_impl(VkInstance instance,
-                                                         const VkAllocationCallbacks* pAllocator);
-static VKAPI_ATTR VkResult VKAPI_CALL vkEnumeratePhysicalDevices_impl(VkInstance instance,
-                                                                      uint32_t* pPhysicalDeviceCount,
-                                                                      VkPhysicalDevice* pPhysicalDevices);
-static VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties_impl(VkPhysicalDevice physicalDevice,
-                                                                     VkPhysicalDeviceProperties* pProperties);
-static VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2_impl(VkPhysicalDevice physicalDevice,
-                                                                    VkPhysicalDeviceFeatures2* pFeatures);
-static VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice_impl(VkPhysicalDevice physicalDevice,
-                                                          const VkDeviceCreateInfo* pCreateInfo,
-                                                          const VkAllocationCallbacks* pAllocator,
-                                                          VkDevice* pDevice);
-static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr_impl(VkDevice device, const char* pName);
-
-// Load the real Vulkan driver
 static void load_real_vulkan() {
     if (real_vk_handle) return;
     real_vk_handle = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
@@ -36,42 +25,12 @@ static void load_real_vulkan() {
     real_vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(real_vk_handle, "vkGetInstanceProcAddr");
 }
 
-// Helper to get a real function pointer
 static void* get_real_proc(const char* name) {
     if (!real_vk_handle) load_real_vulkan();
     return dlsym(real_vk_handle, name);
 }
 
-// ==================== ICD loader interface functions (required) ====================
-
-// Called by the loader to get instance proc addresses
-VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char* pName) {
-    // Provide our wrapped functions for known names
-    if (strcmp(pName, "vkCreateInstance") == 0) return (PFN_vkVoidFunction)vkCreateInstance_impl;
-    if (strcmp(pName, "vkDestroyInstance") == 0) return (PFN_vkVoidFunction)vkDestroyInstance_impl;
-    if (strcmp(pName, "vkEnumeratePhysicalDevices") == 0) return (PFN_vkVoidFunction)vkEnumeratePhysicalDevices_impl;
-    if (strcmp(pName, "vkGetPhysicalDeviceProperties") == 0) return (PFN_vkVoidFunction)vkGetPhysicalDeviceProperties_impl;
-    if (strcmp(pName, "vkGetPhysicalDeviceFeatures2") == 0) return (PFN_vkVoidFunction)vkGetPhysicalDeviceFeatures2_impl;
-    if (strcmp(pName, "vkCreateDevice") == 0) return (PFN_vkVoidFunction)vkCreateDevice_impl;
-    if (strcmp(pName, "vkGetDeviceProcAddr") == 0) return (PFN_vkVoidFunction)vkGetDeviceProcAddr_impl;
-    // For other functions, forward to real driver
-    if (real_vkGetInstanceProcAddr)
-        return real_vkGetInstanceProcAddr(instance, pName);
-    return NULL;
-}
-
-// Negotiate the ICD loader interface version
-VKAPI_ATTR VkResult VKAPI_CALL vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t* pSupportedVersion) {
-    // We support loader interface version 5 (or whatever the loader asks)
-    if (pSupportedVersion) {
-        *pSupportedVersion = 5;  // Typical version for modern Vulkan
-        return VK_SUCCESS;
-    }
-    return VK_ERROR_INITIALIZATION_FAILED;
-}
-
-// ==================== Wrapped Vulkan functions ====================
-
+// --- Wrapped Vulkan functions (forwarded after workarounds) ---
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance_impl(const VkInstanceCreateInfo* pCreateInfo,
                                                      const VkAllocationCallbacks* pAllocator,
                                                      VkInstance* pInstance) {
@@ -137,4 +96,27 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr_impl(VkDevice devic
     if (real_vkGetDeviceProcAddr)
         return real_vkGetDeviceProcAddr(device, pName);
     return NULL;
+}
+
+// --- ICD loader interface (required for Vulkan Loader) ---
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char* pName) {
+    if (strcmp(pName, "vkCreateInstance") == 0) return (PFN_vkVoidFunction)vkCreateInstance_impl;
+    if (strcmp(pName, "vkDestroyInstance") == 0) return (PFN_vkVoidFunction)vkDestroyInstance_impl;
+    if (strcmp(pName, "vkEnumeratePhysicalDevices") == 0) return (PFN_vkVoidFunction)vkEnumeratePhysicalDevices_impl;
+    if (strcmp(pName, "vkGetPhysicalDeviceProperties") == 0) return (PFN_vkVoidFunction)vkGetPhysicalDeviceProperties_impl;
+    if (strcmp(pName, "vkGetPhysicalDeviceFeatures2") == 0) return (PFN_vkVoidFunction)vkGetPhysicalDeviceFeatures2_impl;
+    if (strcmp(pName, "vkCreateDevice") == 0) return (PFN_vkVoidFunction)vkCreateDevice_impl;
+    if (strcmp(pName, "vkGetDeviceProcAddr") == 0) return (PFN_vkVoidFunction)vkGetDeviceProcAddr_impl;
+    // For any other function, forward to the real driver
+    if (real_vkGetInstanceProcAddr)
+        return real_vkGetInstanceProcAddr(instance, pName);
+    return NULL;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t* pSupportedVersion) {
+    if (pSupportedVersion) {
+        *pSupportedVersion = 5;   // Supported loader interface version
+        return VK_SUCCESS;
+    }
+    return VK_ERROR_INITIALIZATION_FAILED;
 }
