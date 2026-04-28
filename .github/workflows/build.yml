@@ -162,38 +162,6 @@ jobs:
                                                                    VkPhysicalDeviceProperties* pProperties);
           VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
                                                                   VkPhysicalDeviceFeatures2* pFeatures);
-          VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physicalDevice,
-                                                        const VkDeviceCreateInfo* pCreateInfo,
-                                                        const VkAllocationCallbacks* pAllocator,
-                                                        VkDevice* pDevice);
-
-          #ifdef __cplusplus
-          }
-          #endif
-
-          #endif
-          EOF
-
-          cat > include/device.h << 'EOF'
-          #ifndef DEVICE_H
-          #define DEVICE_H
-          // Placeholder
-          #endif
-          EOF
-
-          echo "Source files created in src/ and include/"
-
-      - name: Commit and push source files (if changed)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/ include/
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Add Vulkan wrapper source [skip ci]"
-            git push origin HEAD:${{ github.ref_name }}
-          fi
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
