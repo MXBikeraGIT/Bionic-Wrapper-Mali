@@ -1,4 +1,4 @@
-name: Build Vulkan Wrapper (Mali) – and save source
+name: Build Vulkan Wrapper (Mali)
 
 on:
   workflow_dispatch:
