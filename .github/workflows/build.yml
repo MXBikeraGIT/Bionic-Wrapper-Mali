@@ -1,4 +1,4 @@
-name: Build Vulkan Wrapper (Mali)
+name: Build leegao wrapper (with Mali workarounds)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout leegao wrapper source (Mesa)
+        uses: actions/checkout@v4
+        with:
+          repository: leegao/bionic-vulkan-wrapper
+          ref: main
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y python3-pip meson ninja-build git cmake
+          pip3 install mako
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
@@ -15,19 +25,71 @@ jobs:
         with:
           ndk-version: r27c
 
-      - name: Compile libvulkan_wrapper.so
+      - name: Apply Mali workarounds to wrap driver
         run: |
-          NDK=${{ steps.ndk.outputs.ndk-path }}
-          TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-          TARGET=aarch64-linux-android
-          API=24
-          CC=$TOOLCHAIN/bin/$TARGET$API-clang
-          CFLAGS="-fPIC -O2 -Wall -Iinclude -I$NDK/sources/third_party/vulkan/src/include"
-          $CC $CFLAGS -c wrapper.c -o wrapper.o
-          $CC -shared -o libvulkan_wrapper.so wrapper.o
+          cd src/vulkan/wrap
+          # Create a patch file
+          cat > mali_workarounds.patch << 'EOF'
+          --- a/src/vulkan/wrap/wrap_physical_device.c
+          +++ b/src/vulkan/wrap/wrap_physical_device.c
+          @@ -123,6 +123,16 @@ VkResult wrap_physical_device_init(struct wrap_physical_device *phys_dev,
+               if (res != VK_SUCCESS)
+                   return res;
+           
+          +    // Mali workarounds
+          +    if (strstr(phys_dev->device_props.deviceName, "Mali")) {
+          +        // Clamp maxStorageBufferRange to 128 MB
+          +        if (phys_dev->device_props.limits.maxStorageBufferRange > 128 * 1024 * 1024)
+          +            phys_dev->device_props.limits.maxStorageBufferRange = 128 * 1024 * 1024;
+          +        // Force shaderStorageBufferArrayDynamicIndexing support
+          +        phys_dev->features.features.shaderStorageBufferArrayDynamicIndexing = VK_TRUE;
+          +    }
+          +
+               return VK_SUCCESS;
+           }
+          EOF
+          patch -p1 < mali_workarounds.patch
 
-      - name: Upload artifact
+      - name: Configure Mesa to build only wrap driver for Android
+        run: |
+          export ANDROID_NDK=${{ steps.ndk.outputs.ndk-path }}
+          meson setup build \
+            --cross-file cross_files/android-aarch64 \
+            -Dplatforms=android \
+            -Dvulkan-drivers=wrap \
+            -Dgallium-drivers= \
+            -Dandroid-stub=true \
+            -Dbuildtype=release
+
+      - name: Compile
+        run: ninja -C build
+
+      - name: Package driver for Winlator
+        run: |
+          mkdir -p driver_pkg
+          cp build/src/vulkan/wrap/libvulkan_wrap.so driver_pkg/libvulkan_wrapper.so
+          cat > driver_pkg/meta.json << 'EOF'
+          {
+            "name": "Vulkan Wrapper (Mali)",
+            "version": "1.0",
+            "type": "vulkan",
+            "files": [
+              {
+                "source": "libvulkan_wrapper.so",
+                "target": "${system32}/libvulkan_wrapper.so"
+              }
+            ]
+          }
+          EOF
+          # Create a .wcp package (Winlator Content Package)
+          tar -cf driver_pkg.wcp -C driver_pkg .
+          # Also upload the raw .so for manual placement
+          cp driver_pkg/libvulkan_wrapper.so .
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: libvulkan_wrapper
-          path: libvulkan_wrapper.so
+          name: vulkan-wrapper-mali
+          path: |
+            driver_pkg.wcp
+            libvulkan_wrapper.so
